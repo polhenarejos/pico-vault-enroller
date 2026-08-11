@@ -193,8 +193,7 @@ python -m build
 ```
 
 The hardware ceremony requires a real supported board and is not covered by a
-pure host-only test run. Keep a physical enrollment and unenrollment check in
-the release checklist; see [RELEASING.md](RELEASING.md).
+pure host-only test run.
 
 ## License
 

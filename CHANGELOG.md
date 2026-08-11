@@ -6,8 +6,7 @@
   `unenroll`, `help`, `gui`, and `version` commands.
 - Added explicit CLI flags for every GUI field, including license file,
   passphrases, label, enrollment JSON, and PIN.
-- Added release documentation, tutorials, operational guidance, and a
-  maintainer release checklist.
+- Added release documentation, tutorials, and operational guidance.
 - Corrected the `fido2` PIN import path used by the supported API.
 - The encrypted envelope is updated only after the backend certificate is
   checked against the generated X448 public key.
