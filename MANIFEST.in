@@ -1,0 +1,3 @@
+include CHANGELOG.md LICENSE README.md RELEASING.md SECURITY.md
+recursive-include docs *.md
+recursive-include tests *.py

@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pico-vault-enroller"
+dynamic = ["version"]
+description = "Standalone PicoKeys Vault enrollment helper"
+readme = "README.md"
+license = "AGPL-3.0-or-later"
+license-files = ["LICENSE"]
+authors = [{ name = "Pol Henarejos", email = "pol.henarejos@cttc.es" }]
+requires-python = ">=3.10"
+dependencies = ["cryptography>=44", "fido2>=2.0", "pyscard>=2.3"]
+
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Environment :: Console",
+    "Environment :: X11 Applications",
+    "Intended Audience :: System Administrators",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Topic :: Security :: Cryptography",
+]
+
+[project.urls]
+Homepage = "https://github.com/polhenarejos/pico-vault-enroller"
+Repository = "https://github.com/polhenarejos/pico-vault-enroller"
+Issues = "https://github.com/polhenarejos/pico-vault-enroller/issues"
+Pico-FIDO = "https://github.com/polhenarejos/pico-fido"
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[project.scripts]
+pico_vault_enroller = "pico_vault_enroller.cli:main"
+
+[tool.setuptools]
+packages = ["pico_vault_enroller"]
+
+[tool.setuptools.dynamic]
+version = { attr = "pico_vault_enroller.__version__" }
