@@ -20,6 +20,10 @@ the enroller does not flash or upgrade a board. Use the firmware repository's
 [releases](https://github.com/polhenarejos/pico-fido/releases) for board support,
 firmware images, build instructions, and firmware-specific security notes.
 
+The device-bound export and import model provisioned by this tool is described
+in Pol Henarejos, [*Vaulted Passkeys: A Device-Bound Proposal for Authenticated
+Credential Export and Import*](https://arxiv.org/abs/2608.13806).
+
 ## Requirements
 
 - Python 3.10 or newer.
