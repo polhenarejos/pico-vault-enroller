@@ -29,7 +29,8 @@ Credential Export and Import*](https://arxiv.org/abs/2608.13806).
 - Python 3.10 or newer.
 - A Pico-FIDO firmware build with Vault enrollment support.
 - A valid PicoKeys license file.
-- The board PIN and physical access to its `BOOTSEL` button.
+- The selected application password (FIDO PIN, OpenPGP PW3, or PIV PIN) and
+  physical access to its `BOOTSEL` button.
 - Network access to `https://www.picokeys.com/pico/picokeyapp/` while requesting
   the certificate.
 - A working USB HID stack. CCID/PCSC access is also supported when `pyscard`
@@ -62,8 +63,8 @@ The 1.0 program is the `pico_vault_enroller` package. After installation use
 pico_vault_enroller help
 pico_vault_enroller version
 pico_vault_enroller create --license-file /path/to/license.json --label "office backup"
-pico_vault_enroller enroll --license-file /path/to/license.bin --envelope /path/to/enrollment.json
-pico_vault_enroller unenroll
+pico_vault_enroller enroll --app fido --license-file /path/to/license.bin --envelope /path/to/enrollment.json
+pico_vault_enroller unenroll --app fido
 ```
 
 `create` makes the encrypted recovery envelope. It prompts for the passphrase,
@@ -84,8 +85,9 @@ pico_vault_enroller create \
   --confirm-passphrase "..." \
   --label office \
   --envelope enrollment.json
-pico_vault_enroller enroll --license-file license.json --envelope enrollment.json --passphrase "..." --pin "123456"
-pico_vault_enroller gui --license-file license.json --envelope enrollment.json --passphrase "..." --pin "123456"
+pico_vault_enroller enroll --app openpgp --license-file license.json --envelope enrollment.json --passphrase "..." --password "..."
+pico_vault_enroller enroll --app piv --license-file license.json --envelope enrollment.json --passphrase "..." --password "12345678"
+pico_vault_enroller gui --app piv --license-file license.json --envelope enrollment.json --passphrase "..." --password "12345678"
 ```
 
 The complete option set is shown by `pico_vault_enroller help create`,
@@ -109,9 +111,10 @@ pico_vault_enroller gui
 ```
 
 Select the license file, create or select an enrollment JSON, unlock it with
-its passphrase, and choose **Enroll vault**. The GUI also exposes **Unenroll
-vault**, which removes the Vault key and certificate from the board but keeps
-the local enrollment JSON for later use.
+its passphrase, choose FIDO, OpenPGP, or PIV, enter that application's password,
+and choose **Enroll vault**. The GUI also exposes **Unenroll vault**, which
+removes the selected application's Vault key and certificate from the board but
+keeps the local enrollment JSON for later use.
 
 See [the end-to-end tutorial](docs/tutorial.md) for a first enrollment and
 [the operations guide](docs/operations.md) for backup, replacement-board, and
@@ -164,10 +167,11 @@ claimed the FIDO interface, and verify that the firmware exposes HID or CCID.
 On Linux, check the udev permissions for the device. For CCID, confirm that a
 PC/SC service is running and that `pyscard` installed successfully.
 
-**PIN authentication fails**
+**Application authentication fails**
 
-Check the PIN and retry with the board freshly connected. Repeated failures
-follow the firmware's PIN retry policy; the enroller does not bypass it.
+Check the selected application and its password: FIDO PIN, OpenPGP PW3, or PIV
+PIN. Retry with the board freshly connected. Repeated failures follow the
+firmware's retry policy; the enroller does not bypass it.
 
 **The enrollment window expires**
 

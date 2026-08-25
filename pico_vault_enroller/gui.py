@@ -3,7 +3,7 @@ import threading
 from pathlib import Path
 
 from .crypto import _create_new_envelope, _default_directory, _read_enrollment_json
-from .device import _enroll_existing, _unenroll_existing
+from .device import APP_CHOICES, APP_FIDO, APP_LABELS, APP_OPENPGP, _enroll_existing, _unenroll_existing
 
 
 def _open_enrollment_directory() -> None:
@@ -16,14 +16,14 @@ def _open_enrollment_directory() -> None:
         webbrowser.open(directory.as_uri())
 
 
-def gui_main(license_file: Path | None = None, create_passphrase: str = "", create_confirmation: str = "", create_label: str = "", envelope: Path | None = None, passphrase: str = "", pin: str = ""):
+def gui_main(license_file: Path | None = None, create_passphrase: str = "", create_confirmation: str = "", create_label: str = "", envelope: Path | None = None, passphrase: str = "", pin: str = "", app: str = APP_FIDO):
     import tkinter as tk
     from tkinter import filedialog, messagebox, ttk
 
     root = tk.Tk()
     root.title("PicoKeys Vault Enroller")
-    root.geometry("760x400")
-    root.minsize(700, 380)
+    root.geometry("760x450")
+    root.minsize(700, 430)
     asset_root = Path(__file__).resolve().parent.parent / "picokeyapp" / "assets"
     try:
         root.iconbitmap(str(asset_root / "icon.ico"))
@@ -38,6 +38,8 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
     enroll_label_var = tk.StringVar(value="Not selected")
     enroll_passphrase_var = tk.StringVar(value=passphrase)
     enroll_pin_var = tk.StringVar(value=pin)
+    enroll_app_var = tk.StringVar(value=app if app in APP_CHOICES else APP_FIDO)
+    enroll_pin_label_var = tk.StringVar(value=APP_LABELS[enroll_app_var.get()])
     status_var = tk.StringVar(value="Ready.")
 
     form = ttk.Frame(root, padding=10)
@@ -121,12 +123,13 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
         license_path = Path(license_var.get()) if license_var.get() else None
         passphrase = enroll_passphrase_var.get()
         pin = enroll_pin_var.get()
+        selected_app = enroll_app_var.get()
         if not envelope_path or not license_path or not passphrase or not pin:
-            messagebox.showerror("Enrollment", "License file, enrollment JSON, passphrase, and PIN are required")
+            messagebox.showerror("Enrollment", "License file, enrollment JSON, passphrase, and app password are required")
             return
         def worker():
             try:
-                vault_id = _enroll_existing(envelope_path, passphrase, pin, license_path, report=report, prompt=False)
+                vault_id = _enroll_existing(envelope_path, passphrase, pin, license_path, app=selected_app, report=report, prompt=False)
                 report(f"Enrolled vault: {vault_id.hex()}")
             except Exception as error:
                 report(f"Enrollment failed: {error}")
@@ -134,14 +137,15 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
 
     def unenroll():
         pin = enroll_pin_var.get()
+        selected_app = enroll_app_var.get()
         if not pin:
-            messagebox.showerror("Unenroll vault", "Pico-FIDO PIN is required")
+            messagebox.showerror("Unenroll vault", "App password is required")
             return
         if not messagebox.askyesno("Unenroll vault", "Remove the vault key and certificate from the board? The enrollment JSON will be kept."):
             return
         def worker():
             try:
-                _unenroll_existing(pin, report=report)
+                _unenroll_existing(pin, app=selected_app, report=report)
             except Exception as error:
                 report(f"Unenrollment failed: {error}")
         threading.Thread(target=worker, daemon=True).start()
@@ -163,10 +167,15 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
     ttk.Entry(enroll_box, textvariable=enroll_id_var, state="readonly").grid(row=2, column=1, columnspan=2, sticky="ew", pady=4)
     ttk.Label(enroll_box, text="Vault label").grid(row=3, column=0, sticky="w", pady=4)
     ttk.Entry(enroll_box, textvariable=enroll_label_var, state="readonly").grid(row=3, column=1, columnspan=2, sticky="ew", pady=4)
-    ttk.Label(enroll_box, text="Pico-FIDO PIN").grid(row=4, column=0, sticky="w", pady=4)
-    ttk.Entry(enroll_box, textvariable=enroll_pin_var, show="*", width=58).grid(row=4, column=1, columnspan=2, sticky="ew", pady=4)
+    ttk.Label(enroll_box, text="Application").grid(row=4, column=0, sticky="w", pady=4)
+    app_box = ttk.Frame(enroll_box)
+    app_box.grid(row=4, column=1, columnspan=2, sticky="w", pady=4)
+    for value in APP_CHOICES:
+        ttk.Radiobutton(app_box, text=value.upper() if value != APP_OPENPGP else "OpenPGP", value=value, variable=enroll_app_var, command=lambda: enroll_pin_label_var.set(APP_LABELS[enroll_app_var.get()])).pack(side="left", padx=(0, 10))
+    ttk.Label(enroll_box, textvariable=enroll_pin_label_var).grid(row=5, column=0, sticky="w", pady=4)
+    ttk.Entry(enroll_box, textvariable=enroll_pin_var, show="*", width=58).grid(row=5, column=1, columnspan=2, sticky="ew", pady=4)
     enroll_actions = ttk.Frame(enroll_box)
-    enroll_actions.grid(row=5, column=0, columnspan=3, sticky="w", pady=(10, 0))
+    enroll_actions.grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
     ttk.Button(enroll_actions, text="Enroll vault", command=enroll).pack(side="left")
     ttk.Button(enroll_actions, text="Unenroll vault", command=unenroll).pack(side="left", padx=(8, 0))
 

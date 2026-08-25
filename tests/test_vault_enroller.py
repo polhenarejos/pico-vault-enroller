@@ -11,6 +11,7 @@ from cryptography.x509.oid import NameOID
 
 from pico_vault_enroller import crypto
 from pico_vault_enroller.cli import main
+from pico_vault_enroller.device import APP_OPENPGP, APP_PIV, _vault_apdu, _verify_card_pin
 
 
 def test_vault_id_is_deterministic_and_256_bit():
@@ -51,6 +52,30 @@ def test_version_and_help_commands(capsys):
 
     assert main(["help"]) == 0
     assert "create" in capsys.readouterr().out
+
+
+def test_card_pin_uses_app_specific_verify_reference():
+    calls = []
+
+    class Card:
+        def send(self, ins, p1=0, p2=0, data=b""):
+            calls.append((ins, p1, p2, data))
+
+    card = Card()
+    _verify_card_pin(card, APP_OPENPGP, "pw3")
+    _verify_card_pin(card, APP_PIV, "12345678")
+    _vault_apdu(card, 3, b"packet")
+
+    assert calls == [(0x20, 0, 0x83, b"pw3"), (0x20, 0, 0x80, b"12345678"), (0xf2, 3, 0, b"packet")]
+
+
+def test_enroll_command_accepts_each_application():
+    from pico_vault_enroller.cli import _build_parser
+
+    parser, _ = _build_parser()
+    for app in ("fido", "openpgp", "piv"):
+        args = parser.parse_args(["enroll", "--license-file", "license", "--app", app])
+        assert args.app == app
 
 
 def test_create_command_accepts_gui_equivalent_flags(tmp_path, capsys):

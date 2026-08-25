@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from .crypto import _create_new_envelope
-from .device import _enroll_existing, _unenroll_existing
+from .device import APP_CHOICES, APP_LABELS, APP_FIDO, _enroll_existing, _unenroll_existing
 from .gui import gui_main
 from . import __version__
 
@@ -26,23 +26,27 @@ def _create_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _secret(args: argparse.Namespace) -> str:
+    return args.pin if args.pin is not None else getpass.getpass(f"{APP_LABELS[args.app]}: ")
+
+
 def _enroll_command(args: argparse.Namespace) -> int:
     envelope = _path(args.envelope)
     if envelope is None:
         raise ValueError("enroll requires --envelope")
     passphrase = args.passphrase if args.passphrase is not None else getpass.getpass("Vault passphrase: ")
-    pin = args.pin if args.pin is not None else getpass.getpass("Pico-FIDO PIN: ")
-    vault_id = _enroll_existing(envelope, passphrase, pin, _path(args.license_file), prompt=not bool(args.no_replug_prompt))
+    pin = _secret(args)
+    vault_id = _enroll_existing(envelope, passphrase, pin, _path(args.license_file), app=args.app, prompt=not bool(args.no_replug_prompt))
     print(f"Enrolled vault: {vault_id.hex()}", flush=True)
     return 0
 
 
 def _unenroll_command(args: argparse.Namespace) -> int:
-    pin = args.pin if args.pin is not None else getpass.getpass("Pico-FIDO PIN: ")
+    pin = _secret(args)
     if not args.yes and input("Remove the Vault key and certificate from the board? Type 'yes' to continue: ").strip().lower() != "yes":
         print("Unenrollment cancelled")
         return 0
-    _unenroll_existing(pin)
+    _unenroll_existing(pin, app=args.app)
     return 0
 
 
@@ -62,26 +66,29 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     command_parsers["create"] = create
 
     enroll = commands.add_parser("enroll", help="enroll an existing envelope on a board")
+    enroll.add_argument("--app", choices=APP_CHOICES, default=APP_FIDO, help="application to enroll")
     enroll.add_argument("--envelope")
     enroll.add_argument("--license-file", required=True, help="opaque license file sent to the backend")
     enroll.add_argument("--passphrase")
-    enroll.add_argument("--pin")
+    enroll.add_argument("--pin", "--password", dest="pin", help="FIDO PIN, OpenPGP PW3, or PIV PIN")
     enroll.add_argument("--no-replug-prompt", action="store_true", default=None)
     command_parsers["enroll"] = enroll
 
     unenroll = commands.add_parser("unenroll", help="remove the Vault key from a board")
-    unenroll.add_argument("--pin")
+    unenroll.add_argument("--app", choices=APP_CHOICES, default=APP_FIDO, help="application to unenroll")
+    unenroll.add_argument("--pin", "--password", dest="pin", help="FIDO PIN, OpenPGP PW3, or PIV PIN")
     unenroll.add_argument("--yes", action="store_true", default=None)
     command_parsers["unenroll"] = unenroll
 
     gui = commands.add_parser("gui", help="start the guided graphical interface")
+    gui.add_argument("--app", choices=APP_CHOICES, default=APP_FIDO, help="initial application selection")
     gui.add_argument("--license-file")
     gui.add_argument("--create-passphrase")
     gui.add_argument("--create-confirmation")
     gui.add_argument("--create-label")
     gui.add_argument("--envelope")
     gui.add_argument("--passphrase")
-    gui.add_argument("--pin")
+    gui.add_argument("--pin", "--password", dest="pin", help="FIDO PIN, OpenPGP PW3, or PIV PIN")
     command_parsers["gui"] = gui
 
     help_parser = commands.add_parser("help", help="show help for a command")
@@ -115,7 +122,7 @@ def main(argv=None):
         if args.command == "unenroll":
             return _unenroll_command(args)
         if args.command == "gui":
-            return gui_main(_path(args.license_file), args.create_passphrase or "", args.create_confirmation or "", args.create_label or "", _path(args.envelope), args.passphrase or "", args.pin or "")
+            return gui_main(_path(args.license_file), args.create_passphrase or "", args.create_confirmation or "", args.create_label or "", _path(args.envelope), args.passphrase or "", args.pin or "", args.app)
         raise ValueError(f"unsupported command: {args.command}")
     except KeyboardInterrupt:
         print("Cancelled", file=sys.stderr)

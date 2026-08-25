@@ -14,8 +14,10 @@ from fido2.hid import CAPABILITY, CTAPHID, CtapHidDevice
 
 try:
     from fido2.pcsc import CtapPcscDevice
+    from smartcard.System import readers as pcsc_readers
 except ImportError:
     CtapPcscDevice = None
+    pcsc_readers = None
 
 from .crypto import (
     BACKEND_URL,
@@ -33,6 +35,21 @@ from .crypto import (
     _request_certificate,
     _save,
 )
+
+
+APP_FIDO = "fido"
+APP_OPENPGP = "openpgp"
+APP_PIV = "piv"
+APP_CHOICES = (APP_FIDO, APP_OPENPGP, APP_PIV)
+APP_LABELS = {
+    APP_FIDO: "FIDO PIN",
+    APP_OPENPGP: "OpenPGP PW3",
+    APP_PIV: "PIV PIN",
+}
+_OPENPGP_AID = bytes.fromhex("d27600012401")
+_PIV_AID = bytes.fromhex("a000000308")
+_VAULT_INS = 0xf2
+_VERIFY_INS = 0x20
 
 
 if CtapPcscDevice is not None:
@@ -54,6 +71,50 @@ if CtapPcscDevice is not None:
             return response
 else:
     _CtapPcscVendorDevice = None
+
+
+if CtapPcscDevice is not None:
+    class _PcscApduDevice(CtapPcscDevice):
+        def __init__(self, connection, name, aid):
+            self._name = name
+            self._capabilities = CAPABILITY(0)
+            self.use_ext_apdu = False
+            self.use_nfcctap_getresponse = True
+            self._conn = connection
+            self._aid = aid
+            self._conn.connect()
+            self._select()
+
+        def _select(self):
+            apdu = b"\x00\xa4\x04\x00" + bytes([len(self._aid)]) + self._aid
+            response, sw1, sw2 = self._chained_apdu_exchange(apdu)
+            if (sw1, sw2) != (0x90, 0x00):
+                raise ValueError("Pico CCID applet selection failure")
+
+        def send(self, ins, p1=0, p2=0, data=b""):
+            response, sw1, sw2 = self._chain_apdus(0x00, ins, p1, p2, data)
+            if (sw1, sw2) != (0x90, 0x00):
+                raise RuntimeError(f"CCID APDU failed: SW={sw1:02x}{sw2:02x}")
+            return response
+
+        @classmethod
+        def list_devices(cls, aid):
+            if pcsc_readers is None:
+                return
+            for reader in pcsc_readers():
+                connection = reader.createConnection()
+                try:
+                    yield cls(connection, reader.name, aid)
+                except Exception:
+                    try:
+                        connection.disconnect()
+                    except Exception:
+                        pass
+                    continue
+else:
+    _PcscApduDevice = None
+
+
 def _vendor(device: CtapHidDevice, subcommand: int, params: dict | None = None, pin_protocol: PinProtocolV2 | None = None, pin_token: bytes | None = None) -> dict:
     arguments = {1: subcommand}
     raw_params = cbor.encode(params) if params is not None else b""
@@ -68,10 +129,19 @@ def _vendor(device: CtapHidDevice, subcommand: int, params: dict | None = None, 
     return cbor.decode(response[1:]) if len(response) > 1 else {}
 
 
-def _enroll(device: CtapHidDevice, certificate: bytes, private: x448.X448PrivateKey, kvault: bytes, label: str, pin_protocol: PinProtocolV2, pin_token: bytes) -> bytes:
-    begin = _vendor(device, _VAULT_ENROLL_BEGIN, pin_protocol=pin_protocol, pin_token=pin_token)
-    device_public = begin.get(1, b"")
-    challenge = begin.get(2, b"")
+def _vault_apdu(device: _PcscApduDevice, subcommand: int, data: bytes = b"") -> bytes:
+    return device.send(_VAULT_INS, subcommand, data=data)
+
+
+def _enroll(device: CtapHidDevice, certificate: bytes, private: x448.X448PrivateKey, kvault: bytes, label: str, pin_protocol: PinProtocolV2 | None = None, pin_token: bytes | None = None, app: str = APP_FIDO) -> bytes:
+    if app == APP_FIDO:
+        begin = _vendor(device, _VAULT_ENROLL_BEGIN, pin_protocol=pin_protocol, pin_token=pin_token)
+        device_public = begin.get(1, b"")
+        challenge = begin.get(2, b"")
+    else:
+        begin = _vault_apdu(device, _VAULT_ENROLL_BEGIN)
+        device_public = begin[:56]
+        challenge = begin[56:88]
     if not isinstance(device_public, bytes) or len(device_public) != 56 or not isinstance(challenge, bytes) or len(challenge) != 32:
         raise ValueError("invalid enrollment challenge")
     certificate_public = x509.load_der_x509_certificate(certificate).public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
@@ -85,8 +155,11 @@ def _enroll(device: CtapHidDevice, certificate: bytes, private: x448.X448Private
     nonce = os.urandom(12)
     encrypted = AESGCM(session_key).encrypt(nonce, enrollment_plain, info)
     packet = struct.pack(">H", len(certificate)) + certificate + nonce + encrypted
-    result = _vendor(device, _VAULT_ENROLL_FINISH, {1: packet}, pin_protocol, pin_token)
-    vault_id = result.get(1, b"")
+    if app == APP_FIDO:
+        result = _vendor(device, _VAULT_ENROLL_FINISH, {1: packet}, pin_protocol, pin_token)
+        vault_id = result.get(1, b"")
+    else:
+        vault_id = _vault_apdu(device, _VAULT_ENROLL_FINISH, packet)
     if not isinstance(vault_id, bytes) or len(vault_id) != 32:
         raise ValueError("invalid enrolled vault id")
     return vault_id
@@ -99,38 +172,42 @@ def _first_hid_device() -> CtapHidDevice | None:
         return None
 
 
-def _first_ccid_device():
+def _first_ccid_device(app: str = APP_FIDO):
     if _CtapPcscVendorDevice is None:
         return None
     try:
-        return next(_CtapPcscVendorDevice.list_devices(), None)
+        if app == APP_FIDO:
+            return next(_CtapPcscVendorDevice.list_devices(), None)
+        return next(_PcscApduDevice.list_devices(_OPENPGP_AID if app == APP_OPENPGP else _PIV_AID), None)
     except Exception:
         return None
 
 
-def _first_device():
-    return _first_hid_device() or _first_ccid_device()
+def _first_device(app: str = APP_FIDO):
+    if app == APP_FIDO:
+        return _first_hid_device() or _first_ccid_device(app)
+    return _first_ccid_device(app)
 
 
-def _wait_for_device(report=print):
+def _wait_for_device(report=print, app: str = APP_FIDO):
     while True:
-        device = _first_device()
+        device = _first_device(app)
         if device is not None:
             return device
-        report("Waiting for Pico-FIDO HID/CCID device...")
+        report(f"Waiting for Pico {app.upper()} CCID device..." if app != APP_FIDO else "Waiting for Pico-FIDO HID/CCID device...")
         time.sleep(1)
 
 
-def _wait_for_replug(report=print, prompt=True):
+def _wait_for_replug(report=print, prompt=True, app: str = APP_FIDO):
     if prompt:
-        input("Disconnect and reconnect the board, then press Enter: ")
+        input(f"Disconnect and reconnect the board, then press Enter for {APP_LABELS[app]} enrollment: ")
     else:
         report("Disconnect and reconnect the board")
     while True:
-        device = _first_device()
+        device = _first_device(app)
         if device is not None:
             return device
-        report("Waiting for Pico-FIDO HID/CCID device...")
+        report(f"Waiting for Pico {app.upper()} CCID device..." if app != APP_FIDO else "Waiting for Pico-FIDO HID/CCID device...")
         time.sleep(1)
 
 
@@ -143,24 +220,40 @@ def _get_pin_token(device: CtapHidDevice, pin: str) -> tuple[PinProtocolV2, byte
     return protocol, token
 
 
-def _unenroll(device: CtapHidDevice, pin_protocol: PinProtocolV2, pin_token: bytes) -> None:
-    _vendor(device, _VAULT_UNENROLL, pin_protocol=pin_protocol, pin_token=pin_token)
+def _verify_card_pin(device: _PcscApduDevice, app: str, pin: str) -> None:
+    p2 = 0x83 if app == APP_OPENPGP else 0x80
+    device.send(_VERIFY_INS, p2=p2, data=pin.encode("utf-8"))
 
 
-def _wait_for_enrollment_mode(device: CtapHidDevice, report=print) -> None:
+def _unenroll(device: CtapHidDevice, pin_protocol: PinProtocolV2 | None = None, pin_token: bytes | None = None, app: str = APP_FIDO) -> None:
+    if app == APP_FIDO:
+        _vendor(device, _VAULT_UNENROLL, pin_protocol=pin_protocol, pin_token=pin_token)
+    else:
+        _vault_apdu(device, _VAULT_UNENROLL)
+
+
+def _wait_for_enrollment_mode(device: CtapHidDevice, report=print, app: str = APP_FIDO) -> None:
     report("Hold BOOTSEL continuously for 10 seconds; do not replug")
     while True:
-        status = _vendor(device, _VAULT_STATUS)
-        if status.get(2, False):
+        if app == APP_FIDO:
+            status = _vendor(device, _VAULT_STATUS)
+            ready = status.get(2, False)
+            expired = isinstance(status.get(3), int) and status.get(3) >= 60000
+        else:
+            status = _vault_apdu(device, _VAULT_STATUS)
+            ready = len(status) >= 3 and status[2] != 0
+            expired = False
+        if ready:
             report("Enrollment mode detected")
             return
-        boottime = status.get(3)
-        if isinstance(boottime, int) and boottime >= 60000:
+        if expired:
             raise RuntimeError("board boot window expired; replug and try again")
         time.sleep(1)
 
 
-def _enroll_existing(envelope: Path, passphrase: str, pin: str, license_file: Path, report=print, prompt: bool = True) -> bytes:
+def _enroll_existing(envelope: Path, passphrase: str, pin: str, license_file: Path, report=print, prompt: bool = True, app: str = APP_FIDO) -> bytes:
+    if app not in APP_CHOICES:
+        raise ValueError(f"unsupported app: {app}")
     _read_enrollment_json(envelope, passphrase)
     if not license_file.is_file():
         raise ValueError("license file does not exist")
@@ -173,16 +266,30 @@ def _enroll_existing(envelope: Path, passphrase: str, pin: str, license_file: Pa
         raise ValueError("backend certificate public key does not match the enrollment key")
     _save(envelope, passphrase, kvault, private, certificate, label)
     report("Using existing certificate" if reused else "Certificate issued")
-    device = _wait_for_replug(report, prompt=prompt)
-    pin_protocol, pin_token = _get_pin_token(device, pin)
-    _wait_for_enrollment_mode(device, report)
-    return _enroll(device, certificate, private, kvault, label, pin_protocol, pin_token)
+    device = _wait_for_replug(report, prompt=prompt, app=app)
+    if app == APP_FIDO:
+        pin_protocol, pin_token = _get_pin_token(device, pin)
+    else:
+        if not pin:
+            raise ValueError(f"{APP_LABELS[app]} is required")
+        _verify_card_pin(device, app, pin)
+        pin_protocol, pin_token = None, None
+    _wait_for_enrollment_mode(device, report, app=app)
+    return _enroll(device, certificate, private, kvault, label, pin_protocol, pin_token, app=app)
 
 
-def _unenroll_existing(pin: str, report=print) -> None:
-    report("Waiting for Pico-FIDO device...")
-    device = _wait_for_device(report)
-    pin_protocol, pin_token = _get_pin_token(device, pin)
+def _unenroll_existing(pin: str, report=print, app: str = APP_FIDO) -> None:
+    if app not in APP_CHOICES:
+        raise ValueError(f"unsupported app: {app}")
+    report(f"Waiting for {APP_LABELS[app]} device...")
+    device = _wait_for_device(report, app)
+    if app == APP_FIDO:
+        pin_protocol, pin_token = _get_pin_token(device, pin)
+    else:
+        if not pin:
+            raise ValueError(f"{APP_LABELS[app]} is required")
+        _verify_card_pin(device, app, pin)
+        pin_protocol, pin_token = None, None
     report("Unenrolling vault...")
-    _unenroll(device, pin_protocol, pin_token)
+    _unenroll(device, pin_protocol, pin_token, app=app)
     report("Vault unenrolled; enrollment JSON kept")
