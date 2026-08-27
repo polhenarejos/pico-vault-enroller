@@ -59,10 +59,11 @@ pico_vault_enroller enroll \
   --envelope /secure/path/enrollment.json
 ```
 
-The enroller sends the license file as opaque bytes to the backend. The host
-does not parse, decrypt, or inspect the license. The backend returns a
-certificate, which the enroller verifies contains the generated X448 public
-key. It then prompts you to
+When the enrollment JSON has no certificate, the enroller sends the license
+file as opaque bytes to the backend. The host does not parse, decrypt, or
+inspect the license. The backend returns a certificate, which the enroller
+verifies contains the generated X448 public key. Later enrollments reuse the
+certificate stored in the encrypted JSON. It then prompts you to
 disconnect and reconnect the board. After reconnecting:
 
 1. Enter the board's Pico-FIDO PIN.

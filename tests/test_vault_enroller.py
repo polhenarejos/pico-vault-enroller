@@ -132,3 +132,28 @@ def test_certificate_request_sends_license_as_opaque_bytes(tmp_path, monkeypatch
     assert body["csr"] == "test csr"
     assert "license_id" not in body
     assert captured["request"].get_header("Content-type") == "application/json"
+
+
+def test_enroll_reuses_certificate_from_envelope(tmp_path, monkeypatch):
+    from pico_vault_enroller import device
+
+    envelope = tmp_path / "enrollment.json"
+    license_file = tmp_path / "license.bin"
+    license_file.write_bytes(b"license")
+    private = x448.X448PrivateKey.generate()
+    vault_key = bytes(range(32))
+    signing_key = ed25519.Ed25519PrivateKey.generate()
+    now = datetime.now(timezone.utc)
+    certificate = x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])).issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])).public_key(private.public_key()).serial_number(x509.random_serial_number()).not_valid_before(now).not_valid_after(now + timedelta(days=365)).sign(signing_key, algorithm=None).public_bytes(Encoding.DER)
+    crypto._save(envelope, "secret", vault_key, private, certificate, "test")
+
+    def request_certificate(*args):
+        raise AssertionError("backend certificate request was not expected")
+
+    monkeypatch.setattr(device, "_request_certificate", request_certificate)
+    monkeypatch.setattr(device, "_wait_for_replug", lambda *args, **kwargs: object())
+    monkeypatch.setattr(device, "_verify_card_pin", lambda *args, **kwargs: None)
+    monkeypatch.setattr(device, "_wait_for_enrollment_mode", lambda *args, **kwargs: None)
+    monkeypatch.setattr(device, "_enroll", lambda *args, **kwargs: b"vault-id")
+
+    assert device._enroll_existing(envelope, "secret", "123456", license_file, app=APP_PIV) == b"vault-id"

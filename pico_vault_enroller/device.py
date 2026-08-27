@@ -1,3 +1,4 @@
+import base64
 import struct
 import os
 import time
@@ -261,18 +262,24 @@ def _wait_for_enrollment_mode(device: CtapHidDevice, report=print, app: str = AP
 def _enroll_existing(envelope: Path, passphrase: str, pin: str, license_file: Path, report=print, prompt: bool = True, app: str = APP_FIDO) -> bytes:
     if app not in APP_CHOICES:
         raise ValueError(f"unsupported app: {app}")
-    _read_enrollment_json(envelope, passphrase)
+    _, stored = _read_enrollment_json(envelope, passphrase)
     if not license_file.is_file():
         raise ValueError("license file does not exist")
     kvault, private, label = _read_or_create(envelope, passphrase)
-    report("Requesting backend certificate...")
-    certificate, reused = _request_certificate(BACKEND_URL, license_file, _csr(private))
+    encoded_certificate = stored.get("certificate", "")
+    certificate = base64.b64decode(encoded_certificate) if encoded_certificate else b""
+    cached = bool(certificate)
+    reused = cached
+    if not cached:
+        report("Requesting backend certificate...")
+        certificate, reused = _request_certificate(BACKEND_URL, license_file, _csr(private))
     certificate_public = x509.load_der_x509_certificate(certificate).public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     expected_public = private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
     if certificate_public != expected_public:
         raise ValueError("backend certificate public key does not match the enrollment key")
-    _save(envelope, passphrase, kvault, private, certificate, label)
-    report("Using existing certificate" if reused else "Certificate issued")
+    if not cached:
+        _save(envelope, passphrase, kvault, private, certificate, label)
+    report("Using existing certificate" if cached or reused else "Certificate issued")
     device = _wait_for_replug(report, prompt=prompt, app=app)
     if app == APP_FIDO:
         pin_protocol, pin_token = _get_pin_token(device, pin)

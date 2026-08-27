@@ -69,7 +69,8 @@ pico_vault_enroller unenroll --app fido
 
 `create` makes the encrypted recovery envelope. It prompts for the passphrase,
 confirmation, and optional label when those values are not supplied. `enroll`
-requests the certificate and performs the board ceremony. `unenroll` removes
+uses the stored certificate when available, otherwise requests one, and then
+performs the board ceremony. `unenroll` removes
 the Vault key and certificate from the board and asks for an explicit `yes`
 confirmation unless `--yes` is supplied.
 
@@ -137,8 +138,8 @@ New files are named `enrollment-<vault-id-prefix>-<label>.json`. The JSON
 contains an AES-GCM ciphertext. The plaintext inside it contains the Vault
 root key, the enroller X448 private key, the certificate, and the label. The
 license file is not parsed or copied into the envelope; it is sent as opaque
-bytes to the backend during enrollment. The passphrase is never sent to the
-backend or the board.
+bytes to the backend when a certificate is needed. Later enrollments reuse the
+stored certificate. The passphrase is never sent to the backend or the board.
 
 Back up the entire JSON file and its passphrase independently. A copy of the
 JSON without its passphrase is unusable; a passphrase without the JSON cannot
@@ -147,8 +148,9 @@ them into issue trackers.
 
 ## Compatibility and scope
 
-- The current wire profile requires the backend-issued certificate. There is
-  no offline or anonymous enrollment mode.
+- The current wire profile requires a backend-issued certificate at least
+  once. Later enrollments can reuse the stored certificate; there is no
+  anonymous enrollment mode.
 - The certificate is checked against the generated X448 public key before the
   envelope is updated.
 - The tool does not flash firmware, change the board PIN, export credentials,
