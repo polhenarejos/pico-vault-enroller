@@ -222,7 +222,14 @@ def _get_pin_token(device: CtapHidDevice, pin: str) -> tuple[PinProtocolV2, byte
 
 def _verify_card_pin(device: _PcscApduDevice, app: str, pin: str) -> None:
     p2 = 0x83 if app == APP_OPENPGP else 0x80
-    device.send(_VERIFY_INS, p2=p2, data=pin.encode("utf-8"))
+    if app == APP_PIV:
+        pin_bytes = pin.encode("ascii")
+        if not 6 <= len(pin_bytes) <= 8:
+            raise ValueError("PIV PIN must be 6 to 8 ASCII bytes")
+        pin_bytes = pin_bytes.ljust(8, b"\xff")
+    else:
+        pin_bytes = pin.encode("utf-8")
+    device.send(_VERIFY_INS, p2=p2, data=pin_bytes)
 
 
 def _unenroll(device: CtapHidDevice, pin_protocol: PinProtocolV2 | None = None, pin_token: bytes | None = None, app: str = APP_FIDO) -> None:

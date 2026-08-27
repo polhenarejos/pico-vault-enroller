@@ -69,6 +69,20 @@ def test_card_pin_uses_app_specific_verify_reference():
     assert calls == [(0x20, 0, 0x83, b"pw3"), (0x20, 0, 0x80, b"12345678"), (0xf2, 3, 0, b"packet")]
 
 
+def test_piv_pin_is_fixed_width_and_ff_padded():
+    calls = []
+
+    class Card:
+        def send(self, ins, p1=0, p2=0, data=b""):
+            calls.append((ins, p1, p2, data))
+
+    _verify_card_pin(Card(), APP_PIV, "123456")
+
+    assert calls == [(0x20, 0, 0x80, b"123456\xff\xff")]
+    with pytest.raises(ValueError, match="6 to 8"):
+        _verify_card_pin(Card(), APP_PIV, "0123456789")
+
+
 def test_enroll_command_accepts_each_application():
     from pico_vault_enroller.cli import _build_parser
 
