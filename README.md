@@ -1,24 +1,26 @@
 # PicoKeys Vault Enroller
 
 `pico-vault-enroller` is the standalone host-side tool for provisioning a
-Pico-FIDO Vault. It creates or opens an encrypted recovery envelope, obtains a
-Vault certificate from the PicoKeys service, and performs the PIN- and
-button-authorized enrollment ceremony over HID or CCID.
+PicoKeys Vault on compatible PicoKeys hardware. It creates or opens an
+encrypted recovery envelope, obtains a Vault certificate from the PicoKeys
+service, and performs the PIN- and button-authorized enrollment ceremony
+through the selected FIDO, OpenPGP, or PIV application. FIDO uses HID or CCID;
+OpenPGP and PIV use CCID through the platform's PC/SC service.
 
 This tool handles the plaintext `Kvault` during enrollment. Treat the computer
-running it as trusted and keep the resulting enrollment JSON and passphrase
-safe. The 1.0 release is not a replacement for a tested backup and recovery
+running it as trusted, and keep the resulting enrollment JSON and passphrase
+safe. The enroller is not a replacement for a tested backup and recovery
 procedure.
 
-## Relationship to Pico-FIDO
+## Relationship to PicoKeys firmware
 
-The enroller is the host-side companion to the firmware in the
-[Pico-FIDO project](https://github.com/polhenarejos/pico-fido). Install a
-Vault-capable firmware build from that project before using this repository;
-the enroller does not flash or upgrade a board. Use the firmware repository's
-[README](https://github.com/polhenarejos/pico-fido#readme) and
-[releases](https://github.com/polhenarejos/pico-fido/releases) for board support,
-firmware images, build instructions, and firmware-specific security notes.
+The enroller is a host-side companion to Vault-capable firmware projects,
+including Pico-FIDO and Pico-OpenPGP. Install a supported firmware build before
+using this repository; the enroller does not flash or upgrade a board. Use the
+relevant firmware project's documentation and releases for board support,
+firmware images, build instructions, and firmware-specific security notes. For
+Pico-FIDO, see the [project README](https://github.com/polhenarejos/pico-fido#readme)
+and [releases](https://github.com/polhenarejos/pico-fido/releases).
 
 The device-bound export and import model provisioned by this tool is described
 in Pol Henarejos, [*Vaulted Passkeys: A Device-Bound Proposal for Authenticated
@@ -27,7 +29,8 @@ Credential Export and Import*](https://arxiv.org/abs/2608.13806).
 ## Requirements
 
 - Python 3.10 or newer.
-- A Pico-FIDO firmware build with Vault enrollment support.
+- A compatible PicoKeys firmware build with Vault enrollment support, such as
+  Pico-FIDO or Pico-OpenPGP.
 - A valid PicoKeys license file.
 - The selected application password (FIDO PIN, OpenPGP PW3, or PIV PIN) and
   physical access to its `BOOTSEL` button.
@@ -39,7 +42,29 @@ Credential Export and Import*](https://arxiv.org/abs/2608.13806).
 The GUI uses the Python standard-library `tkinter` module. On some Linux
 distributions it is installed as a separate system package.
 
+## Supported applications
+
+FIDO is the default application and uses the FIDO PIN over HID or CCID. For
+OpenPGP cards, use `--app openpgp`; the enroller selects the OpenPGP CCID
+application and authenticates with the OpenPGP PW3 password. OpenPGP therefore
+requires a working PC/SC service and `pyscard`; FIDO HID access is not used.
+For PIV cards, use `--app piv`; PIV also uses CCID/PCSC and requires a 6- to
+8-character ASCII PIV PIN.
+
 ## Install from a checkout
+
+With [uv](https://docs.astral.sh/uv/), install the command and its declared
+dependencies in one step:
+
+```sh
+uv tool install --editable .
+```
+
+The `--editable` option makes changes in the checkout available immediately.
+Omit it for a normal user install. `uv` creates an isolated tool environment
+and downloads missing Python packages automatically.
+
+If `uv` is not available, use a standard virtual environment:
 
 Use a virtual environment and install the project in editable mode while
 developing:
@@ -65,6 +90,8 @@ pico_vault_enroller version
 pico_vault_enroller create --license-file /path/to/license.json --label "office backup"
 pico_vault_enroller enroll --app fido --license-file /path/to/license.bin --envelope /path/to/enrollment.json
 pico_vault_enroller unenroll --app fido
+pico_vault_enroller enroll --app openpgp --license-file /path/to/license.bin --envelope /path/to/enrollment.json
+pico_vault_enroller unenroll --app openpgp
 ```
 
 `create` makes the encrypted recovery envelope. It prompts for the passphrase,
@@ -103,6 +130,68 @@ pico_vault_enroller --help
 pico_vault_enroller --version
 ```
 
+## Quick start (CLI)
+
+1. Install Vault-capable firmware on the board and have your PicoKeys license
+   file ready. For OpenPGP or PIV enrollment, also ensure that the board is
+   available through CCID and that a PC/SC service is running.
+
+2. From this repository, install the enroller:
+
+   ```sh
+   uv tool install --editable .
+   ```
+
+3. Create an encrypted enrollment envelope. The command prompts for and never
+   stores the passphrase in shell history:
+
+   ```sh
+   pico_vault_enroller create \
+     --license-file /secure/path/license.bin \
+     --label "office backup"
+   ```
+
+   Keep the passphrase and the printed enrollment JSON path. You need both for
+   later enrollment.
+
+4. Enroll through FIDO (the default application):
+
+   ```sh
+   pico_vault_enroller enroll \
+     --app fido \
+     --license-file /secure/path/license.bin \
+     --envelope /secure/path/enrollment.json
+   ```
+
+   Enter the envelope passphrase and FIDO PIN when prompted. Disconnect and
+   reconnect the board, then hold `BOOTSEL` continuously for 10 seconds. Keep
+   holding it until the tool reports that enrollment mode was detected.
+
+   For OpenPGP, use the OpenPGP CCID application and PW3 instead:
+
+   ```sh
+   pico_vault_enroller enroll \
+     --app openpgp \
+     --license-file /secure/path/license.bin \
+     --envelope /secure/path/enrollment.json
+   ```
+
+   Enter the envelope passphrase and OpenPGP PW3 when prompted, then follow
+   the same reconnect and `BOOTSEL` steps. The command prints the resulting
+   Vault ID when enrollment completes.
+
+   For PIV, use the PIV CCID application instead:
+
+   ```sh
+   pico_vault_enroller enroll \
+     --app piv \
+     --license-file /secure/path/license.bin \
+     --envelope /secure/path/enrollment.json
+   ```
+
+   Enter the envelope passphrase and a 6- to 8-character ASCII PIV PIN when
+   prompted, then follow the same reconnect and `BOOTSEL` steps.
+
 ## Quick start (GUI)
 
 Start the guided interface with:
@@ -122,7 +211,7 @@ See [the end-to-end tutorial](docs/tutorial.md) for a first enrollment and
 unenrollment procedures.
 
 The implementation lives in the `pico_vault_enroller` package: `cli.py` owns
-command parsing, `gui.py` the optional interface, `device.py` the Pico-FIDO
+command parsing, `gui.py` the optional interface, `device.py` the device
 ceremony, and `crypto.py` the encrypted envelope and certificate helpers.
 
 ## Enrollment files
@@ -210,5 +299,5 @@ pure host-only test run.
 Copyright © Pol Henarejos and contributors. This project is licensed under the GNU
 Affero General Public License, version 3 or later. See [LICENSE](LICENSE).
 
-The companion firmware is maintained separately in
-[polhenarejos/pico-fido](https://github.com/polhenarejos/pico-fido).
+The compatible firmware projects are maintained separately. See the relevant
+firmware project for board support and firmware releases.

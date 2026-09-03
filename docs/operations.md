@@ -2,10 +2,11 @@
 
 ## Re-enroll an existing Vault on a replacement board
 
-1. Flash the replacement board with a Vault-capable firmware build.
+1. Flash the replacement board with compatible Vault-capable firmware.
 2. Keep the original `enrollment-*.json` and its passphrase available.
 3. Run the enroller with `--envelope` pointing to that file.
-4. Complete the PIN and `BOOTSEL` ceremony on the replacement board.
+4. Complete the selected application's password and `BOOTSEL` ceremony on the
+   replacement board.
 5. Verify that the printed Vault ID is the expected ID.
 
 The replacement board receives the same `Kvault`, so it remains in the same
@@ -14,10 +15,10 @@ property.
 
 ## Unenroll a board
 
-Use the GUI, select the enrollment JSON, unlock it, enter the board PIN, and
-choose **Unenroll vault**. Confirm the warning. The board's Vault key and
-certificate are removed; the local JSON is deliberately retained so the Vault
-can be enrolled again later.
+Use the GUI, select the enrollment JSON, unlock it, enter the selected
+application's password, and choose **Unenroll vault**. Confirm the warning. The
+board's Vault key and certificate are removed; the local JSON is deliberately
+retained so the Vault can be enrolled again later.
 
 Unenrollment is a device operation. Deleting the local JSON alone does not
 remove the key from a board, and unenrolling the board does not destroy the

@@ -1,14 +1,12 @@
 # First Vault enrollment
 
-This tutorial assumes a supported Pico-FIDO board is already running Vault
-firmware and that you have received a license file. The command-line path is
-shown first; the GUI performs the same ceremony.
+This tutorial assumes a supported PicoKeys board is already running
+Vault-capable firmware and that you have received a license file. The
+command-line path is shown first; the GUI performs the same ceremony.
 
-If the board is not ready, start with the
-[Pico-FIDO firmware repository](https://github.com/polhenarejos/pico-fido). Its
-[README](https://github.com/polhenarejos/pico-fido#readme) covers board
-selection, firmware downloads, and building from source. This repository only
-installs the host enroller.
+If the board is not ready, start with the documentation for its firmware
+project, such as Pico-FIDO or Pico-OpenPGP. This repository only installs the
+host enroller; it does not flash the board.
 
 ## 1. Install in an isolated environment
 
@@ -30,7 +28,7 @@ pico_vault_enroller version
 
 ## 2. Create the recovery envelope
 
-Connect the board and keep the license file available. Start enrollment:
+Keep the license file available. Create the recovery envelope:
 
 ```sh
 pico_vault_enroller create \
@@ -55,6 +53,7 @@ Start the ceremony with:
 
 ```sh
 pico_vault_enroller enroll \
+  --app fido \
   --license-file /secure/path/picokeys-license.json \
   --envelope /secure/path/enrollment.json
 ```
@@ -66,7 +65,7 @@ verifies contains the generated X448 public key. Later enrollments reuse the
 certificate stored in the encrypted JSON. It then prompts you to
 disconnect and reconnect the board. After reconnecting:
 
-1. Enter the board's Pico-FIDO PIN.
+1. Enter the selected application's password. For FIDO, this is the FIDO PIN.
 2. When the tool says it is waiting for enrollment mode, hold `BOOTSEL`.
 3. Keep holding it for 10 seconds. Do not unplug the board during the hold.
 4. Release the button when enrollment mode is detected.
@@ -91,10 +90,15 @@ such as the Vault ID and label.
 Before relying on the board, verify the workflow your deployment needs:
 
 - reconnect and unlock the same enrollment JSON;
-- perform one supported Vault export/import test with the main Pico-FIDO tools;
+- perform one supported Vault export/import test with the relevant PicoKeys tools;
 - confirm that the saved Vault ID matches the inventory record;
 - document who can access the board PIN and who can access the recovery
   passphrase.
 
 The enroller itself does not export or import credentials. It only provisions
 the Vault key and certificate used by the firmware's Vault feature.
+
+For OpenPGP, add `--app openpgp` to the enrollment command and enter the
+OpenPGP PW3 password. For PIV, add `--app piv` and enter a 6- to 8-character
+ASCII PIV PIN. Both applications require CCID/PCSC access and use the same
+reconnect and `BOOTSEL` ceremony.
