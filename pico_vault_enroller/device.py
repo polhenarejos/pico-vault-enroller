@@ -2,6 +2,7 @@ import base64
 import struct
 import os
 import time
+from pathlib import Path
 
 from cryptography import x509
 from cryptography.hazmat.primitives import hashes, serialization
