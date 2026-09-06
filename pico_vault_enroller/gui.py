@@ -4,6 +4,7 @@ from pathlib import Path
 
 from .crypto import _create_new_envelope, _default_directory, _read_enrollment_json
 from .device import APP_CHOICES, APP_FIDO, APP_LABELS, APP_OPENPGP, _enroll_existing, _unenroll_existing
+from . import __version__
 
 
 def _open_enrollment_directory() -> None:
@@ -21,14 +22,9 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
     from tkinter import filedialog, messagebox, ttk
 
     root = tk.Tk()
-    root.title("PicoKeys Vault Enroller")
+    root.title(f"PicoKeys Vault Enroller {__version__}")
     root.geometry("760x450")
     root.minsize(700, 430)
-    asset_root = Path(__file__).resolve().parent.parent / "picokeyapp" / "assets"
-    try:
-        root.iconbitmap(str(asset_root / "icon.ico"))
-    except Exception:
-        pass
     license_var = tk.StringVar(value=str(license_file or ""))
     create_passphrase_var = tk.StringVar(value=create_passphrase)
     create_confirmation_var = tk.StringVar(value=create_confirmation)
@@ -40,8 +36,6 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
     enroll_pin_var = tk.StringVar(value=pin)
     enroll_app_var = tk.StringVar(value=app if app in APP_CHOICES else APP_FIDO)
     enroll_pin_label_var = tk.StringVar(value=APP_LABELS[enroll_app_var.get()])
-    status_var = tk.StringVar(value="Ready.")
-
     form = ttk.Frame(root, padding=10)
     form.pack(fill="both", expand=True)
     form.columnconfigure(0, weight=1)
@@ -50,14 +44,6 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
 
     header = ttk.Frame(form)
     header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
-    try:
-        logo = tk.PhotoImage(file=str(asset_root / "pico-keys-256.png"))
-        logo = logo.subsample(max(1, logo.width() // 64), max(1, logo.height() // 64))
-        logo_label = tk.Label(header, image=logo)
-        logo_label.image = logo
-        logo_label.pack(side="left", padx=(0, 10))
-    except Exception:
-        pass
     ttk.Label(header, text="PicoKeys Vault Enroller", font=("TkDefaultFont", 16, "bold")).pack(side="left")
 
     create_box = ttk.LabelFrame(form, text="Create new vault", padding=8)
@@ -74,7 +60,13 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
     ttk.Entry(create_box, textvariable=create_label_var, width=58).grid(row=3, column=1, columnspan=2, sticky="ew", pady=4)
 
     def report(message: str):
-        root.after(0, lambda: status_var.set(message))
+        def update_status():
+            status_text.configure(state="normal")
+            status_text.delete("1.0", "end")
+            status_text.insert("1.0", message)
+            status_text.configure(state="disabled")
+
+        root.after(0, update_status)
 
     def load_enrollment_info():
         path = Path(enroll_path_var.get()) if enroll_path_var.get() else None
@@ -182,5 +174,11 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
     buttons = ttk.Frame(form)
     buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
     ttk.Button(buttons, text="Open vault folder", command=_open_enrollment_directory).pack(side="left")
-    ttk.Label(form, textvariable=status_var, wraplength=650).grid(row=3, column=0, columnspan=2, sticky="w", pady=12)
+    label_style = ttk.Style(root)
+    status_text = tk.Text(form, height=2, wrap="word", state="disabled", cursor="arrow", relief="flat", borderwidth=0)
+    status_text.configure(background=label_style.lookup("TLabel", "background"), foreground=label_style.lookup("TLabel", "foreground"), font=label_style.lookup("TLabel", "font"), highlightthickness=0)
+    status_text.grid(row=3, column=0, columnspan=2, sticky="ew", pady=12)
+    status_text.configure(state="normal")
+    status_text.insert("1.0", "Ready.")
+    status_text.configure(state="disabled")
     root.mainloop()

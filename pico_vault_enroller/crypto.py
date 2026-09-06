@@ -1,9 +1,11 @@
 import base64
 import getpass
 import hashlib
+import hmac
 import json
 import os
 import re
+import struct
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -19,6 +21,7 @@ from cryptography.x509.oid import NameOID, ObjectIdentifier
 
 _AAD = b"PicoKeys Kvault envelope v1"
 _ENROLL_INFO = b"PicoKeys Vault enrollment v1"
+_HPKE_ENROLL_INFO = b"PicoKeys Vault enrollment v2"
 _VAULT_ID_DOMAIN = b"PicoKeys Vault ID v1"
 _VAULT_X448_PUBLIC_KEY_OID = ObjectIdentifier("1.3.6.1.4.1.55555.1.2")
 _VENDOR_VAULT = 0x05
@@ -26,10 +29,97 @@ _VAULT_STATUS = 0x01
 _VAULT_ENROLL_BEGIN = 0x02
 _VAULT_ENROLL_FINISH = 0x03
 _VAULT_UNENROLL = 0x06
+_VAULT_ENROLLMENT_PROTOCOL_LEGACY = 1
+_VAULT_ENROLLMENT_PROTOCOL = 2
 _VAULT_LABEL_MAX = 64
 BACKEND_URL = "https://www.picokeys.com/pico/picokeyapp/"
 _FIDO_BACKUP_AID = bytes.fromhex("b0000006472f0001")
 _VAULT_ID_HEX_LENGTH = 12
+
+
+def _hkdf_sha512_extract(salt: bytes, ikm: bytes) -> bytes:
+    return hmac.digest(salt or bytes(64), ikm, "sha512")
+
+
+def _hkdf_sha512_expand(prk: bytes, info: bytes, length: int) -> bytes:
+    if length > 255 * 64:
+        raise ValueError("HKDF output is too long")
+    output = bytearray()
+    previous = b""
+    for counter in range(1, (length + 63) // 64 + 1):
+        previous = hmac.digest(prk, previous + info + bytes([counter]), "sha512")
+        output.extend(previous)
+    return bytes(output[:length])
+
+
+def _hpke_labeled_extract(suite_id: bytes, salt: bytes, label: bytes, ikm: bytes) -> bytes:
+    return _hkdf_sha512_extract(salt, b"HPKE-v1" + suite_id + label + ikm)
+
+
+def _hpke_labeled_expand(suite_id: bytes, prk: bytes, label: bytes, info: bytes, length: int) -> bytes:
+    return _hkdf_sha512_expand(prk, struct.pack(">H", length) + b"HPKE-v1" + suite_id + label + info, length)
+
+
+def _hpke_auth_encrypt(certificate: bytes, sender_private: x448.X448PrivateKey, recipient_public: bytes, challenge: bytes, plaintext: bytes) -> bytes:
+    if len(recipient_public) != 56 or len(challenge) != 32:
+        raise ValueError("invalid HPKE enrollment inputs")
+    sender_public = sender_private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    ephemeral_private = x448.X448PrivateKey.generate()
+    encapsulated = ephemeral_private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    recipient_key = x448.X448PublicKey.from_public_bytes(recipient_public)
+    dh_e = ephemeral_private.exchange(recipient_key)
+    dh_s = sender_private.exchange(recipient_key)
+    if not any(dh_e) or not any(dh_s):
+        raise ValueError("X448 produced an all-zero shared secret")
+    dh = dh_e + dh_s
+    kem_suite_id = b"KEM\x00\x21"
+    hpke_suite_id = b"HPKE\x00\x21\x00\x03\x00\x02"
+    eae_prk = _hpke_labeled_extract(kem_suite_id, b"", b"eae_prk", dh)
+    shared_secret = _hpke_labeled_expand(kem_suite_id, eae_prk, b"shared_secret", encapsulated + recipient_public + sender_public, 64)
+    psk_id_hash = _hpke_labeled_extract(hpke_suite_id, b"", b"psk_id_hash", b"")
+    info = _HPKE_ENROLL_INFO + challenge
+    info_hash = _hpke_labeled_extract(hpke_suite_id, b"", b"info_hash", info)
+    key_schedule_context = b"\x02" + psk_id_hash + info_hash
+    secret = _hpke_labeled_extract(hpke_suite_id, shared_secret, b"secret", b"")
+    key = _hpke_labeled_expand(hpke_suite_id, secret, b"key", key_schedule_context, 32)
+    nonce = _hpke_labeled_expand(hpke_suite_id, secret, b"base_nonce", key_schedule_context, 12)
+    return encapsulated + AESGCM(key).encrypt(nonce, plaintext, certificate)
+
+
+def _hpke_auth_decrypt(certificate: bytes, recipient_private: x448.X448PrivateKey, sender_public: bytes, challenge: bytes, encrypted: bytes) -> bytes:
+    if len(encrypted) < 56 + 16 or len(sender_public) != 56 or len(challenge) != 32:
+        raise ValueError("invalid HPKE enrollment payload")
+    encapsulated = encrypted[:56]
+    ciphertext = encrypted[56:]
+    recipient_public = recipient_private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    dh_e = recipient_private.exchange(x448.X448PublicKey.from_public_bytes(encapsulated))
+    dh_s = recipient_private.exchange(x448.X448PublicKey.from_public_bytes(sender_public))
+    if not any(dh_e) or not any(dh_s):
+        raise ValueError("X448 produced an all-zero shared secret")
+    dh = dh_e + dh_s
+    kem_suite_id = b"KEM\x00\x21"
+    hpke_suite_id = b"HPKE\x00\x21\x00\x03\x00\x02"
+    eae_prk = _hpke_labeled_extract(kem_suite_id, b"", b"eae_prk", dh)
+    shared_secret = _hpke_labeled_expand(kem_suite_id, eae_prk, b"shared_secret", encapsulated + recipient_public + sender_public, 64)
+    psk_id_hash = _hpke_labeled_extract(hpke_suite_id, b"", b"psk_id_hash", b"")
+    info = _HPKE_ENROLL_INFO + challenge
+    info_hash = _hpke_labeled_extract(hpke_suite_id, b"", b"info_hash", info)
+    key_schedule_context = b"\x02" + psk_id_hash + info_hash
+    secret = _hpke_labeled_extract(hpke_suite_id, shared_secret, b"secret", b"")
+    key = _hpke_labeled_expand(hpke_suite_id, secret, b"key", key_schedule_context, 32)
+    nonce = _hpke_labeled_expand(hpke_suite_id, secret, b"base_nonce", key_schedule_context, 12)
+    return AESGCM(key).decrypt(nonce, ciphertext, certificate)
+
+
+def _legacy_enrollment_encrypt(certificate: bytes, sender_private: x448.X448PrivateKey, recipient_public: bytes, challenge: bytes, plaintext: bytes) -> bytes:
+    if len(recipient_public) != 56 or len(challenge) != 32:
+        raise ValueError("invalid legacy enrollment inputs")
+    certificate_public = x509.load_der_x509_certificate(certificate).public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    info = _ENROLL_INFO + challenge + certificate_public + recipient_public
+    shared = sender_private.exchange(x448.X448PublicKey.from_public_bytes(recipient_public))
+    session_key = HKDF(algorithm=hashes.SHA256(), length=32, salt=None, info=info).derive(shared)
+    nonce = os.urandom(12)
+    return nonce + AESGCM(session_key).encrypt(nonce, plaintext, info)
 
 
 def _default_path() -> Path:
