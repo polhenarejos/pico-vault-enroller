@@ -86,6 +86,26 @@ def test_status_selects_enrollment_protocol(monkeypatch, status, expected):
     assert device._wait_for_enrollment_mode(object(), report=lambda _: None) == expected
 
 
+def test_fido_pin_token_is_acquired_after_enrollment_window(tmp_path, monkeypatch):
+    private = x448.X448PrivateKey.generate()
+    signer = ed25519.Ed25519PrivateKey.generate()
+    now = datetime.now(timezone.utc)
+    certificate = x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])).issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])).public_key(private.public_key()).serial_number(x509.random_serial_number()).not_valid_before(now).not_valid_after(now + timedelta(days=1)).sign(signer, algorithm=None).public_bytes(Encoding.DER)
+    events = []
+
+    monkeypatch.setattr(device, "_read_enrollment_json", lambda *args: (None, {"certificate": base64.b64encode(certificate).decode()}))
+    monkeypatch.setattr(device, "_read_or_create", lambda *args: (bytes(32), private, "test"))
+    monkeypatch.setattr(device, "_wait_for_replug", lambda *args, **kwargs: object())
+    monkeypatch.setattr(device, "_wait_for_enrollment_mode", lambda *args, **kwargs: events.append("window") or 2)
+    monkeypatch.setattr(device, "_get_pin_token", lambda *args: events.append("pin") or (object(), b"token"))
+    monkeypatch.setattr(device, "_enroll", lambda *args, **kwargs: events.append(("enroll", args[6])) or b"vault-id")
+
+    license_file = tmp_path / "license"
+    license_file.write_bytes(b"license")
+    assert device._enroll_existing(tmp_path / "enrollment.json", "secret", "123456", license_file, prompt=False) == b"vault-id"
+    assert events == ["window", "pin", ("enroll", b"token")]
+
+
 def test_label_slug_is_bounded_and_filesystem_safe():
     slug = crypto._label_slug("  office / backup: 2026  ")
 

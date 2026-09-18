@@ -336,14 +336,14 @@ def _enroll_existing(envelope: Path, passphrase: str, pin: str, license_file: Pa
     report("Using existing certificate" if cached or reused else "Certificate issued")
     device = _wait_for_replug(report, prompt=prompt, app=app)
     try:
-        if app == APP_FIDO:
-            pin_protocol, pin_token = _get_pin_token(device, pin)
-        else:
+        if app != APP_FIDO:
             if not pin:
                 raise ValueError(f"{APP_LABELS[app]} is required")
             _verify_card_pin(device, app, pin)
             pin_protocol, pin_token = None, None
         enrollment_protocol = _wait_for_enrollment_mode(device, report, app=app)
+        if app == APP_FIDO:
+            pin_protocol, pin_token = _get_pin_token(device, pin)
         return _enroll(device, certificate, private, kvault, label, pin_protocol, pin_token, app=app, enrollment_protocol=enrollment_protocol)
     except Exception as error:
         _raise_with_device_diagnostic(error, device)
