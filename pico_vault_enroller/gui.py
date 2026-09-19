@@ -5,7 +5,7 @@ import threading
 from pathlib import Path
 
 from .crypto import _certificate_pem, _create_new_envelope, _default_directory, _read_enrollment_json
-from .device import APP_CHOICES, APP_FIDO, APP_LABELS, APP_OPENPGP, _enroll_existing, _unenroll_existing
+from .device import APP_CHOICES, APP_FIDO, APP_LABELS, APP_OPENPGP, _enroll_existing, _renew_certificate, _unenroll_existing
 from . import __version__
 
 
@@ -66,14 +66,13 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
     form.pack(fill="both", expand=True)
     form.columnconfigure(0, weight=1)
     form.columnconfigure(1, weight=1)
-    form.rowconfigure(1, weight=1)
 
     header = ttk.Frame(form)
     header.grid(row=0, column=0, columnspan=2, sticky="ew", pady=(0, 6))
     ttk.Label(header, text="PicoKeys Vault Enroller", font=("TkDefaultFont", 16, "bold")).pack(side="left")
 
     create_box = ttk.LabelFrame(form, text="Create new vault", padding=8)
-    create_box.grid(row=1, column=0, sticky="nsew", padx=(0, 6), pady=4)
+    create_box.grid(row=1, column=0, sticky="new", padx=(0, 6), pady=4)
     create_box.columnconfigure(1, weight=1)
     ttk.Label(create_box, text="License file").grid(row=0, column=0, sticky="w", pady=4)
     ttk.Entry(create_box, textvariable=license_var, width=58).grid(row=0, column=1, sticky="ew", pady=4)
@@ -193,10 +192,26 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
                 report(f"Unenrollment failed: {error}")
         threading.Thread(target=worker, daemon=True).start()
 
+    def renew_certificate():
+        envelope_path = Path(enroll_path_var.get()) if enroll_path_var.get() else None
+        license_path = Path(license_var.get()) if license_var.get() else None
+        passphrase = enroll_passphrase_var.get()
+        if not envelope_path or not license_path or not passphrase:
+            messagebox.showerror("Renew certificate", "License file, enrollment JSON, and passphrase are required")
+            return
+        def worker():
+            try:
+                _renew_certificate(envelope_path, passphrase, license_path, report=report)
+            except Exception as error:
+                report(f"Certificate renewal failed: {error}")
+            finally:
+                root.after(0, load_enrollment_info)
+        threading.Thread(target=worker, daemon=True).start()
+
     ttk.Button(create_box, text="Create new kvault", command=create_new).grid(row=4, column=0, columnspan=3, sticky="w", pady=(10, 0))
 
     enroll_box = ttk.LabelFrame(form, text="Enroll existing vault", padding=8)
-    enroll_box.grid(row=1, column=1, sticky="nsew", padx=(6, 0), pady=4)
+    enroll_box.grid(row=1, column=1, sticky="new", padx=(6, 0), pady=4)
     enroll_box.columnconfigure(1, weight=1)
     ttk.Label(enroll_box, text="Enrollment JSON").grid(row=0, column=0, sticky="w", pady=4)
     ttk.Entry(enroll_box, textvariable=enroll_path_var, width=58, state="readonly").grid(row=0, column=1, sticky="ew", pady=4)
@@ -217,20 +232,21 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
         ttk.Radiobutton(app_box, text=value.upper() if value != APP_OPENPGP else "OpenPGP", value=value, variable=enroll_app_var, command=lambda: enroll_pin_label_var.set(APP_LABELS[enroll_app_var.get()])).pack(side="left", padx=(0, 10))
     ttk.Label(enroll_box, textvariable=enroll_pin_label_var).grid(row=5, column=0, sticky="w", pady=4)
     ttk.Entry(enroll_box, textvariable=enroll_pin_var, show="*", width=58).grid(row=5, column=1, columnspan=2, sticky="ew", pady=4)
-    enroll_actions = ttk.Frame(enroll_box)
-    enroll_actions.grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
+    buttons = ttk.Frame(form)
+    buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
+    buttons.columnconfigure(0, weight=1)
+    ttk.Button(buttons, text="Open vault folder", command=_open_enrollment_directory).grid(row=0, column=0, sticky="w")
+    enroll_actions = ttk.Frame(buttons)
+    enroll_actions.grid(row=0, column=1, sticky="e")
     ttk.Button(enroll_actions, text="Enroll vault", command=enroll).pack(side="left")
     ttk.Button(enroll_actions, text="Unenroll vault", command=unenroll).pack(side="left", padx=(8, 0))
+    ttk.Button(enroll_actions, text="Renew certificate", command=renew_certificate).pack(side="left", padx=(8, 0))
     certificate_tooltip_host = ttk.Frame(enroll_actions)
     certificate_tooltip_host.pack(side="left", padx=(8, 0))
     certificate_button = ttk.Button(certificate_tooltip_host, text="Export certificate", command=export_certificate, state="disabled")
     certificate_button.pack()
     add_tooltip(certificate_tooltip_host, "Try enroll first", certificate_button)
     load_enrollment_info()
-
-    buttons = ttk.Frame(form)
-    buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))
-    ttk.Button(buttons, text="Open vault folder", command=_open_enrollment_directory).pack(side="left")
     label_style = ttk.Style(root)
     status_text = tk.Text(form, height=2, wrap="word", state="disabled", cursor="arrow", relief="flat", borderwidth=0)
     status_text.configure(background=label_style.lookup("TLabel", "background"), foreground=label_style.lookup("TLabel", "foreground"), font=label_style.lookup("TLabel", "font"), highlightthickness=0)

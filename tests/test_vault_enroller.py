@@ -9,7 +9,7 @@ from cryptography.hazmat.primitives.asymmetric import ed25519, x448
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
-from cryptography.hazmat.primitives.serialization import Encoding, PublicFormat
+from cryptography.hazmat.primitives.serialization import Encoding, NoEncryption, PrivateFormat, PublicFormat
 from cryptography.x509.oid import NameOID
 
 from pico_vault_enroller import crypto, device
@@ -197,6 +197,29 @@ def test_export_certificate_command_writes_pem(tmp_path):
 
     assert main(["export-certificate", "--envelope", str(envelope), "--passphrase", "secret", "--output", str(output)]) == 0
     assert output.read_bytes().startswith(b"-----BEGIN CERTIFICATE-----")
+
+
+def test_certificate_renewal_preserves_vault_key_and_updates_certificate(tmp_path, monkeypatch):
+    envelope = tmp_path / "enrollment.json"
+    license_file = tmp_path / "license.bin"
+    license_file.write_bytes(b"updated license")
+    old_private = x448.X448PrivateKey.generate()
+    new_private = x448.X448PrivateKey.generate()
+    signer = ed25519.Ed25519PrivateKey.generate()
+    now = datetime.now(timezone.utc)
+    old_certificate = x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "old")])).issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "old")])).public_key(old_private.public_key()).serial_number(x509.random_serial_number()).not_valid_before(now).not_valid_after(now + timedelta(days=1)).sign(signer, algorithm=None).public_bytes(Encoding.DER)
+    new_certificate = x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "new")])).issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "new")])).public_key(new_private.public_key()).serial_number(x509.random_serial_number()).not_valid_before(now).not_valid_after(now + timedelta(days=1)).sign(signer, algorithm=None).public_bytes(Encoding.DER)
+    vault_key = bytes(range(32))
+    crypto._save(envelope, "secret", vault_key, old_private, old_certificate, "test")
+    monkeypatch.setattr(device.x448.X448PrivateKey, "generate", lambda: new_private)
+    monkeypatch.setattr(device, "_request_certificate", lambda *args: (new_certificate, False))
+
+    device._renew_certificate(envelope, "secret", license_file, report=lambda _: None)
+
+    _, stored = crypto._read_enrollment_json(envelope, "secret")
+    assert base64.b64decode(stored["kvault"]) == vault_key
+    assert base64.b64decode(stored["certificate"]) == new_certificate
+    assert base64.b64decode(stored["x448_private"]) == new_private.private_bytes(Encoding.Raw, PrivateFormat.Raw, NoEncryption())
 
 
 def test_create_command_accepts_gui_equivalent_flags(tmp_path, capsys):

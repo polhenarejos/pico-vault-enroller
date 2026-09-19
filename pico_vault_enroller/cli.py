@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 from .crypto import _certificate_pem, _create_new_envelope, _read_enrollment_json
-from .device import APP_CHOICES, APP_LABELS, APP_FIDO, _enroll_existing, _unenroll_existing
+from .device import APP_CHOICES, APP_LABELS, APP_FIDO, _enroll_existing, _renew_certificate, _unenroll_existing
 from .gui import gui_main
 from . import __version__
 
@@ -59,6 +59,18 @@ def _export_certificate_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _renew_certificate_command(args: argparse.Namespace) -> int:
+    envelope = _path(args.envelope)
+    license_file = _path(args.license_file)
+    if envelope is None:
+        raise ValueError("renew-certificate requires --envelope")
+    if license_file is None:
+        raise ValueError("renew-certificate requires --license-file")
+    passphrase = args.passphrase if args.passphrase is not None else getpass.getpass("Vault passphrase: ")
+    _renew_certificate(envelope, passphrase, license_file)
+    return 0
+
+
 def _unenroll_command(args: argparse.Namespace) -> int:
     pin = _secret(args)
     if not args.yes and input("Remove the Vault key and certificate from the board? Type 'yes' to continue: ").strip().lower() != "yes":
@@ -97,6 +109,12 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     export_certificate.add_argument("--passphrase")
     export_certificate.add_argument("--output", required=True, help="PEM output path")
     command_parsers["export-certificate"] = export_certificate
+
+    renew_certificate = commands.add_parser("renew-certificate", help="request a replacement certificate using an updated license")
+    renew_certificate.add_argument("--envelope", required=True, help="encrypted enrollment JSON")
+    renew_certificate.add_argument("--license-file", required=True, help="updated opaque license file sent to the backend")
+    renew_certificate.add_argument("--passphrase")
+    command_parsers["renew-certificate"] = renew_certificate
 
     unenroll = commands.add_parser("unenroll", help="remove the Vault key from a board")
     unenroll.add_argument("--app", choices=APP_CHOICES, default=APP_FIDO, help="application to unenroll")
@@ -145,6 +163,8 @@ def main(argv=None):
             return _enroll_command(args)
         if args.command == "export-certificate":
             return _export_certificate_command(args)
+        if args.command == "renew-certificate":
+            return _renew_certificate_command(args)
         if args.command == "unenroll":
             return _unenroll_command(args)
         if args.command == "gui":

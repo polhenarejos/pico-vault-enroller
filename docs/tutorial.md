@@ -70,6 +70,18 @@ disconnect and reconnect the board. After reconnecting:
 3. Keep holding it for 10 seconds. Do not unplug the board during the hold.
 4. Release the button when enrollment mode is detected.
 
+If the license later includes additional boards, update the license file and
+renew the certificate before enrolling them:
+
+```sh
+pico_vault_enroller renew-certificate \
+  --license-file /secure/path/updated-license.json \
+  --envelope /secure/path/enrollment.json
+```
+
+The renewal keeps the same Vault key and ID. Existing boards do not need to be
+reenrolled.
+
 The command prints a 64-character Vault ID. Keep this ID with your inventory
 record; it identifies the Vault domain but does not replace the encrypted
 recovery file.

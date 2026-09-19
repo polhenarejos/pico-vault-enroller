@@ -349,6 +349,23 @@ def _enroll_existing(envelope: Path, passphrase: str, pin: str, license_file: Pa
         _raise_with_device_diagnostic(error, device)
 
 
+def _renew_certificate(envelope: Path, passphrase: str, license_file: Path, report=print) -> None:
+    if not envelope.is_file():
+        raise ValueError("enrollment JSON does not exist")
+    if not license_file.is_file():
+        raise ValueError("license file does not exist")
+    kvault, _, label = _read_or_create(envelope, passphrase)
+    private = x448.X448PrivateKey.generate()
+    report("Requesting backend certificate...")
+    certificate, _ = _request_certificate(BACKEND_URL, license_file, _csr(private))
+    certificate_public = x509.load_der_x509_certificate(certificate).public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    expected_public = private.public_key().public_bytes(serialization.Encoding.Raw, serialization.PublicFormat.Raw)
+    if certificate_public != expected_public:
+        raise ValueError("backend certificate public key does not match the renewal key")
+    _save(envelope, passphrase, kvault, private, certificate, label)
+    report("Certificate renewed")
+
+
 def _unenroll_existing(pin: str, report=print, app: str = APP_FIDO) -> None:
     if app not in APP_CHOICES:
         raise ValueError(f"unsupported app: {app}")
