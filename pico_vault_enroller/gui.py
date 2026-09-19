@@ -1,8 +1,10 @@
+import base64
+import binascii
 import os
 import threading
 from pathlib import Path
 
-from .crypto import _create_new_envelope, _default_directory, _read_enrollment_json
+from .crypto import _certificate_pem, _create_new_envelope, _default_directory, _read_enrollment_json
 from .device import APP_CHOICES, APP_FIDO, APP_LABELS, APP_OPENPGP, _enroll_existing, _unenroll_existing
 from . import __version__
 
@@ -36,6 +38,30 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
     enroll_pin_var = tk.StringVar(value=pin)
     enroll_app_var = tk.StringVar(value=app if app in APP_CHOICES else APP_FIDO)
     enroll_pin_label_var = tk.StringVar(value=APP_LABELS[enroll_app_var.get()])
+    certificate_button = None
+
+    def add_tooltip(widget, text: str, disabled_widget=None):
+        tooltip = None
+
+        def hide(_=None):
+            nonlocal tooltip
+            if tooltip is not None:
+                tooltip.destroy()
+                tooltip = None
+
+        def show(event):
+            nonlocal tooltip
+            target = disabled_widget if disabled_widget is not None else widget
+            if tooltip is not None or not target.instate(["disabled"]):
+                return
+            tooltip = tk.Toplevel(widget)
+            tooltip.wm_overrideredirect(True)
+            tooltip.wm_geometry(f"+{event.x_root + 10}+{event.y_root + 10}")
+            tk.Label(tooltip, text=text, background="#ffffe0", relief="solid", borderwidth=1, padx=4, pady=2).pack()
+
+        widget.bind("<Enter>", show)
+        widget.bind("<Leave>", hide)
+
     form = ttk.Frame(root, padding=10)
     form.pack(fill="both", expand=True)
     form.columnconfigure(0, weight=1)
@@ -72,15 +98,38 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
         path = Path(enroll_path_var.get()) if enroll_path_var.get() else None
         enroll_id_var.set("Not selected")
         enroll_label_var.set("Not selected")
+        if certificate_button is not None:
+            certificate_button.configure(state="disabled")
         if not path or not path.is_file() or not enroll_passphrase_var.get():
             return
         try:
             value, stored = _read_enrollment_json(path, enroll_passphrase_var.get())
-            enroll_id_var.set(str(stored.get("vault_id") or value.get("vault_id") or "Unavailable"))
-            enroll_label_var.set(str(stored.get("label") or value.get("label") or "(no label)"))
-        except Exception as error:
+        except Exception:
             enroll_id_var.set("Unlock failed")
             enroll_label_var.set("")
+            return
+        enroll_id_var.set(str(stored.get("vault_id") or value.get("vault_id") or "Unavailable"))
+        enroll_label_var.set(str(stored.get("label") or value.get("label") or "(no label)"))
+        certificate = stored.get("certificate")
+        if certificate:
+            try:
+                _certificate_pem(base64.b64decode(certificate, validate=True))
+            except (binascii.Error, TypeError, ValueError):
+                return
+            certificate_button.configure(state="normal")
+
+    def export_certificate():
+        if certificate_button is None or certificate_button.instate(["disabled"]):
+            return
+        try:
+            _, stored = _read_enrollment_json(Path(enroll_path_var.get()), enroll_passphrase_var.get())
+            certificate = _certificate_pem(base64.b64decode(stored["certificate"], validate=True))
+            path = filedialog.asksaveasfilename(defaultextension=".pem", filetypes=[("PEM certificate", "*.pem")], initialfile=f"{Path(enroll_path_var.get()).stem}.pem")
+            if path:
+                Path(path).write_bytes(certificate)
+                report(f"Exported certificate: {Path(path).name}")
+        except (binascii.Error, KeyError, OSError, TypeError, ValueError) as error:
+            messagebox.showerror("Export certificate failed", str(error))
 
     def select_enrollment():
         path = filedialog.askopenfilename(initialdir=_default_directory(), filetypes=[("JSON files", "*.json")])
@@ -125,6 +174,8 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
                 report(f"Enrolled vault: {vault_id.hex()}")
             except Exception as error:
                 report(f"Enrollment failed: {error}")
+            finally:
+                root.after(0, load_enrollment_info)
         threading.Thread(target=worker, daemon=True).start()
 
     def unenroll():
@@ -170,6 +221,12 @@ def gui_main(license_file: Path | None = None, create_passphrase: str = "", crea
     enroll_actions.grid(row=6, column=0, columnspan=3, sticky="w", pady=(10, 0))
     ttk.Button(enroll_actions, text="Enroll vault", command=enroll).pack(side="left")
     ttk.Button(enroll_actions, text="Unenroll vault", command=unenroll).pack(side="left", padx=(8, 0))
+    certificate_tooltip_host = ttk.Frame(enroll_actions)
+    certificate_tooltip_host.pack(side="left", padx=(8, 0))
+    certificate_button = ttk.Button(certificate_tooltip_host, text="Export certificate", command=export_certificate, state="disabled")
+    certificate_button.pack()
+    add_tooltip(certificate_tooltip_host, "Try enroll first", certificate_button)
+    load_enrollment_info()
 
     buttons = ttk.Frame(form)
     buttons.grid(row=2, column=0, columnspan=2, sticky="ew", pady=(8, 0))

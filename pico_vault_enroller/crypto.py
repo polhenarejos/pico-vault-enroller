@@ -174,6 +174,10 @@ def _read_enrollment_json(path: Path, passphrase: str) -> tuple[dict, dict]:
     return value, stored
 
 
+def _certificate_pem(certificate: bytes) -> bytes:
+    return x509.load_der_x509_certificate(certificate).public_bytes(serialization.Encoding.PEM)
+
+
 def _save(path: Path, passphrase: str, kvault: bytes, private: x448.X448PrivateKey, certificate: bytes, label: str = "") -> None:
     salt = os.urandom(16)
     nonce = os.urandom(12)

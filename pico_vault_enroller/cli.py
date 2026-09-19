@@ -1,9 +1,10 @@
 import argparse
+import base64
 import getpass
 import sys
 from pathlib import Path
 
-from .crypto import _create_new_envelope
+from .crypto import _certificate_pem, _create_new_envelope, _read_enrollment_json
 from .device import APP_CHOICES, APP_LABELS, APP_FIDO, _enroll_existing, _unenroll_existing
 from .gui import gui_main
 from . import __version__
@@ -41,6 +42,23 @@ def _enroll_command(args: argparse.Namespace) -> int:
     return 0
 
 
+def _export_certificate_command(args: argparse.Namespace) -> int:
+    envelope = _path(args.envelope)
+    if envelope is None:
+        raise ValueError("export-certificate requires --envelope")
+    output = _path(args.output)
+    if output is None:
+        raise ValueError("export-certificate requires --output")
+    passphrase = args.passphrase if args.passphrase is not None else getpass.getpass("Vault passphrase: ")
+    _, stored = _read_enrollment_json(envelope, passphrase)
+    encoded_certificate = stored.get("certificate")
+    if not encoded_certificate:
+        raise ValueError("certificate is not embedded; try enroll first")
+    output.write_bytes(_certificate_pem(base64.b64decode(encoded_certificate, validate=True)))
+    print(f"Exported certificate: {output}")
+    return 0
+
+
 def _unenroll_command(args: argparse.Namespace) -> int:
     pin = _secret(args)
     if not args.yes and input("Remove the Vault key and certificate from the board? Type 'yes' to continue: ").strip().lower() != "yes":
@@ -73,6 +91,12 @@ def _build_parser() -> tuple[argparse.ArgumentParser, dict[str, argparse.Argumen
     enroll.add_argument("--pin", "--password", dest="pin", help="FIDO PIN, OpenPGP PW3, or PIV PIN")
     enroll.add_argument("--no-replug-prompt", action="store_true", default=None)
     command_parsers["enroll"] = enroll
+
+    export_certificate = commands.add_parser("export-certificate", help="export the embedded certificate as PEM")
+    export_certificate.add_argument("--envelope", required=True, help="encrypted enrollment JSON")
+    export_certificate.add_argument("--passphrase")
+    export_certificate.add_argument("--output", required=True, help="PEM output path")
+    command_parsers["export-certificate"] = export_certificate
 
     unenroll = commands.add_parser("unenroll", help="remove the Vault key from a board")
     unenroll.add_argument("--app", choices=APP_CHOICES, default=APP_FIDO, help="application to unenroll")
@@ -119,6 +143,8 @@ def main(argv=None):
             return _create_command(args)
         if args.command == "enroll":
             return _enroll_command(args)
+        if args.command == "export-certificate":
+            return _export_certificate_command(args)
         if args.command == "unenroll":
             return _unenroll_command(args)
         if args.command == "gui":

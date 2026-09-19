@@ -42,6 +42,14 @@ def test_enrollment_round_trip_and_wrong_passphrase(tmp_path):
         crypto._read_enrollment_json(path, "wrong horse")
 
 
+def test_certificate_is_exported_as_pem():
+    key = ed25519.Ed25519PrivateKey.generate()
+    now = datetime.now(timezone.utc)
+    certificate = x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])).issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])).public_key(key.public_key()).serial_number(x509.random_serial_number()).not_valid_before(now).not_valid_after(now + timedelta(days=1)).sign(key, algorithm=None).public_bytes(Encoding.DER)
+
+    assert crypto._certificate_pem(certificate).startswith(b"-----BEGIN CERTIFICATE-----")
+
+
 def test_hpke_enrollment_round_trip_and_tampering():
     sender = x448.X448PrivateKey.generate()
     recipient = x448.X448PrivateKey.generate()
@@ -176,6 +184,19 @@ def test_enroll_command_accepts_each_application():
     for app in ("fido", "openpgp", "piv"):
         args = parser.parse_args(["enroll", "--license-file", "license", "--app", app])
         assert args.app == app
+
+
+def test_export_certificate_command_writes_pem(tmp_path):
+    envelope = tmp_path / "enrollment.json"
+    output = tmp_path / "vault-cert.pem"
+    private = x448.X448PrivateKey.generate()
+    signing_key = ed25519.Ed25519PrivateKey.generate()
+    now = datetime.now(timezone.utc)
+    certificate = x509.CertificateBuilder().subject_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])).issuer_name(x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "test")])).public_key(private.public_key()).serial_number(x509.random_serial_number()).not_valid_before(now).not_valid_after(now + timedelta(days=1)).sign(signing_key, algorithm=None).public_bytes(Encoding.DER)
+    crypto._save(envelope, "secret", bytes(range(32)), private, certificate, "test")
+
+    assert main(["export-certificate", "--envelope", str(envelope), "--passphrase", "secret", "--output", str(output)]) == 0
+    assert output.read_bytes().startswith(b"-----BEGIN CERTIFICATE-----")
 
 
 def test_create_command_accepts_gui_equivalent_flags(tmp_path, capsys):

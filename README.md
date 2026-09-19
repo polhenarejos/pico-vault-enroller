@@ -89,6 +89,7 @@ pico_vault_enroller help
 pico_vault_enroller version
 pico_vault_enroller create --license-file /path/to/license.json --label "office backup"
 pico_vault_enroller enroll --app fido --license-file /path/to/license.bin --envelope /path/to/enrollment.json
+pico_vault_enroller export-certificate --envelope /path/to/enrollment.json --output /path/to/vault-cert.pem
 pico_vault_enroller unenroll --app fido
 pico_vault_enroller enroll --app openpgp --license-file /path/to/license.bin --envelope /path/to/enrollment.json
 pico_vault_enroller unenroll --app openpgp
@@ -99,7 +100,9 @@ confirmation, and optional label when those values are not supplied. `enroll`
 uses the stored certificate when available, otherwise requests one, and then
 performs the board ceremony. `unenroll` removes
 the Vault key and certificate from the board and asks for an explicit `yes`
-confirmation unless `--yes` is supplied.
+confirmation unless `--yes` is supplied. `export-certificate` writes the
+certificate embedded in an unlocked enrollment JSON as PEM; enroll first if the
+certificate is not available.
 
 Every GUI field has an equivalent CLI option. For example, the create form's
 license file, passphrase, confirmation, label, and output file are supplied as
